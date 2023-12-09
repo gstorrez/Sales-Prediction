@@ -1,0 +1,303 @@
+#Torrez - Cleaning and Structuring Data/Creating Prediction Model
+#I ran through a couple of scenarios and found it difficult to pick variables based on the Amazon.csv file. I experimented with a few values and felt that this was the best scenario to execute our model.
+rm(list = ls())
+
+# load libraries 
+install.packages("tidyverse")
+library(tidyverse)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+library(caret)
+library(randomForest)
+library('stringr')
+library('dplyr')
+
+# load data
+Amazon_Sale_Report <- read_excel("C:/Users/sonya/Downloads/Amazon Sale Report.csv/Amazon Sale Report.xlsx")
+ASR <- Amazon_Sale_Report
+
+summary(ASR)
+glimpse(ASR)
+
+unique(ASR$Status)
+
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Returned to Seller', 'Returned', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Returning to Seller', 'Returned', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Rejected by Buyer', 'Returned', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Cancelled', 'Returned', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Damaged', 'Returned', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipping', 'Shipped', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Delivered to Buyer', 'Shipped', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Picked Up', 'Shipped', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Pending', 'Shipped', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Pending - Waiting for Pick Up', 'Shipped', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Lost in Transit', 'Shipped', ASR$Status)
+ASR$Status <- ifelse(ASR$Status == 'Shipped - Out for Delivery', 'Shipped', ASR$Status)
+
+unique(ASR$Status)
+
+ASR <- ASR %>%
+  select(-`ship_service_level`, -`Courier Status`, -`ship_city`, -`ship_state`, -`ship_country`)
+
+unique(ASR$`promotion_ids`)
+summary(ASR)
+
+ASR$`promotion_ids` <- str_replace_all(ASR$`promotion_ids`, 'Amazon PLCC Free-Financing Universal Merchant AAT','Yes')
+ASR$`promotion_ids` <- str_replace_all(ASR$`promotion_ids`, 'IN Core Free Shipping','Yes')
+ASR$`promotion_ids` <- str_replace_all(ASR$`promotion_ids`, 'VPC-44571 Coupon','Yes')
+
+ASR$`promotion_ids` <- ASR$`promotion_ids` %>% replace_na('No')
+
+unique(ASR$`promotion_ids`)
+
+m1 <- lm(Amount ~ discounted_price + rating, data = ASR)
+
+summary(m1)
+
+m1_summary <- summary(m1)
+
+m1_summary$r.squared
+
+
+b1 <- m1_summary$coefficients[2,1]
+b1_se <- m1_summary$coefficients[2,2]
+
+b1_upper_ci <- b1 + 1.98*b1_se
+b1_lower_ci <- b1- 1.98*b1_se
+
+confint(m1)
+
+b0 <- m1_summary$coefficients[1,1]
+b1 <- m1_summary$coefficients[2,1]
+
+b0 + b1*68 
+
+x_val <- seq(from = min(ASR$Amount), to = max(ASR$Amount), length.out  = nrow(ASR))
+
+y_pred <- b0 + b1*x_val
+
+ggplot(ASR, aes(x = Amount, y = discounted_price)) +
+  geom_point()+
+  geom_line(aes(x = x_val, y = y_pred))
+
+
+m2 <- lm(discount ~ rating, data = ASR)
+m2_summary <- summary(m2)
+m2_summary
+
+m3 <- lm(discount ~ rating + discounted_price + Qty, 
+         data = ASR)
+m3_summary<- summary(m3)
+m3_summary
+
+m3_summary$r.squared - m1_summary$r.squared
+
+confint(m3)
+m_proj <- lm(discount ~ Qty, data = ASR)
+summary(m_proj)
+
+ASR$Savings <- (ASR$Amount - ASR$discounted_price)
+
+m4 <- lm(Savings ~ Amount + rating + rating_count + Qty + discounted_price, 
+         data = ASR)
+m4_summary<- summary(m4)
+m4_summary
+
+
+m5 <- lm(Savings ~ rating, data = ASR)
+summary(m5)
+
+ggplot(ASR, aes(x = Savings, y = rating)) +
+  geom_point() +
+  geom_smooth(method = 'lm')
+
+m6 <- lm(Qty ~ discount*Amount, data = ASR)
+m6_summary <- summary(m6)
+m6_coefs <- m6_summary$coefficients
+
+ggplot(ASR, aes(x = Qty, y = rating)) +
+  geom_point()
+
+x_vals = seq(from = min(ASR$Savings), to = max(ASR$Savings), length.out = nrow(ASR))
+
+min_price <- min(ASR$discounted_price, na.rm = T)
+mean_price <- mean(ASR$discounted_price, na.rm = T)
+max_price <- max(ASR$discounted_price, na.rm = T)
+
+y_preds_min_price <- m6_coefs[1,1] + 
+  m6_coefs[2,1]*x_vals +
+  m6_coefs[3,1]*min_price +
+  m6_coefs[4,1]*x_vals*min_price
+
+y_preds_mean_price <- m6_coefs[1,1] + 
+  m6_coefs[2,1]*x_vals +
+  m6_coefs[3,1]*mean_price +
+  m6_coefs[4,1]*x_vals*mean_price
+
+y_preds_max_price <- m6_coefs[1,1] + 
+  m6_coefs[2,1]*x_vals +
+  m6_coefs[3,1]*max_price +
+  m6_coefs[4,1]*x_vals*max_price
+
+
+ggplot(ASR, aes(x = Savings, y = Amount)) +
+  geom_point() +
+  geom_line(aes(x = x_vals, y = y_preds_min_price), color = 'blue') +
+  geom_line(aes(x = x_vals, y = y_preds_mean_price)) +
+  geom_line(aes(x = x_vals, y = y_preds_max_price), color = 'red')
+
+ASR$promo <- ifelse(ASR$`promotion_ids` > 0, 1, 0)
+ASR <- ASR %>% select(-`promotion_ids`)
+
+ASR$Amount <- scale(ASR$Amount)
+hist(ASR$Amount)
+
+install.packages("shiny")
+
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(rmarkdown)
+library(knitr)
+library(tidyverse)
+library(shiny)
+
+ASR_linear_model <- ASR %>%
+  lm(formula = Qty ~ Amount + discounted_price + rating + rating_count + promo,
+     data = .) 
+
+saveRDS(ASR_linear_model, "linear_model.RDS")
+
+data("ASR")
+ASR_log_mod <- glm(Qty ~ Amount + discounted_price + rating + rating_count + promo, 
+                    data = ASR)
+
+saveRDS(ASR_log_mod, "logit_model.RDS")
+
+library(tidymodels)
+library(mlbench)
+
+data("ASR")
+set.seed(123)
+splits <- initial_split(ASR %>% na.omit(), strata = discounted_price)
+
+dm_training <- training(splits)
+dm_testing <- testing(splits)
+
+
+dm_rf_mod <- rand_forest(mtry = 4, min_n = 2, trees = 500) %>% 
+  set_engine("ranger", num.threads = 8) %>%
+  set_mode("classification")
+
+rf_recipe <- recipe(discounted_price ~ ., data = dm_training) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_predictors())
+
+rf_workflow <- workflow() %>% 
+  add_model(dm_rf_mod) %>% 
+  add_recipe(rf_recipe)
+
+rf_fit <- rf_workflow %>% 
+  fit(data = dm_training)
+
+# predict(rf_fit, dm_testing, type = "prob")
+
+# augment(rf_fit, dm_testing)
+
+saveRDS(rf_fit, "rf_model.RDS")
+
+
+rm(list = ls())
+
+library(shiny)
+library(ggplot2)
+library(randomForest)
+library(readxl)
+
+# Read data
+Amazon_Sale_Report <- read_excel("~/Greg's School/ISTA 498/Amazon Sale Report.xlsx")
+ASR <- Amazon_Sale_Report
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("Sales Prediction with Random Forest"),
+  sidebarLayout(
+    sidebarPanel(
+      h4("Select Features"),
+      selectInput("feature1", "Select 1st Feature", choices = colnames(ASR)),
+      selectInput("feature2", "Select 2nd Feature", choices = colnames(ASR)),
+      actionButton("trainButton", "Train Model"),
+      br(),
+      h5("Root Mean Squared Error (RMSE):"),
+      textOutput("rmseText"),
+      br(),
+      h5("Predicted Sales:"),
+      textOutput("predictionText")
+    ),
+    mainPanel(
+      plotOutput("scatterplot")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output) {
+  # Reactive expression to train the random forest model
+  trained_model <- eventReactive(input$trainButton, {
+    if (input$trainButton > 0) {
+      formula <- as.formula(paste("Amount ~", input$feature1, "+", input$feature2))
+      rf_model <- randomForest(formula, data = ASR, ntree = 500)
+      return(rf_model)
+    }
+  })
+  
+  # Reactive expression for RMSE
+  rmse <- eventReactive(input$trainButton, {
+    if (!is.null(trained_model())) {
+      predictions <- predict(trained_model(), newdata = ASR)
+      sqrt(mean((predictions - ASR$Amount)^2))
+    }
+  })
+  
+  # Output to display RMSE
+  output$rmseText <- renderText({
+    if (!is.null(rmse())) {
+      paste("RMSE:", round(rmse(), 2))
+    }
+  })
+  
+  # Output to display the scatterplot
+  output$scatterplot <- renderPlot({
+    if (!is.null(trained_model())) {
+      predictions <- predict(trained_model(), newdata = ASR)
+      
+      ggplot(data.frame(Actual = ASR$Amount, Predicted = predictions), aes(x = Actual, y = Predicted)) +
+        geom_point() +
+        geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+        labs(title = "Actual vs. Predicted Sales", x = "Actual Sales", y = "Predicted Sales")
+    }
+  })
+  
+  # Reactive expression for the prediction
+  prediction <- eventReactive(input$trainButton, {
+    if (!is.null(trained_model())) {
+      new_data <- data.frame(
+        variable1 = 0,  # Replace with the actual input values
+        variable2 = 0
+      )
+      predict(trained_model(), new_data)
+    }
+  })
+  
+  # Output to display the prediction
+  output$predictionText <- renderText({
+    if (!is.null(prediction())) {
+      paste("Predicted Sales:", round(prediction(), 2))
+    }
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
